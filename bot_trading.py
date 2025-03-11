@@ -1,6 +1,7 @@
 import pandas as pd
 import ta
 from binance.client import Client
+import time
 
 # Configurar API Key e Secret Key (substituir pelos seus dados)
 API_KEY = ""
@@ -114,10 +115,104 @@ def obter_preco_atual(symbol):
     print(f"\n💰 Preço Atual do {symbol}: {preco_atual:.2f}\n")
     return preco_atual
 
+
+# Variável global para evitar ordens duplicadas
+ultima_ordem = None
+
+def verificar_saldo():
+    """ Obtém os saldos disponíveis em USDT e BTC para negociação. """
+    try:
+        saldo_usdt = float(client.get_asset_balance(asset="USDT")["free"])
+        saldo_btc = float(client.get_asset_balance(asset="BTC")["free"])
+        
+        print(f"\n💰 Saldo Atual:")
+        print(f"  - USDT disponível: {saldo_usdt:.2f} USDT")
+        print(f"  - BTC disponível: {saldo_btc:.6f} BTC\n")
+        
+        return saldo_usdt, saldo_btc
+    except Exception as e:
+        print(f"❌ Erro ao obter saldo: {e}")
+        return 0, 0
+
+
+def comprar(qtd_btc):
+    """ Executa uma ordem de compra de BTC com a quantidade especificada. """
+    global ultima_ordem
+    try:
+        saldo_usdt, saldo_btc = verificar_saldo()
+        preco_atual = obter_preco_atual(SYMBOL)
+
+        if saldo_usdt < preco_atual * qtd_btc:
+            print("❌ Saldo insuficiente para compra!")
+            return
+
+        # Criar ordem de compra
+        ordem = client.order_market_buy(symbol=SYMBOL, quantity=qtd_btc)
+        ultima_ordem = "compra"
+
+        print(f"\n✅ Ordem de COMPRA executada! Quantidade: {qtd_btc} BTC\n")
+        print(ordem)
+
+        # Exibir saldo atualizado
+        verificar_saldo()
+    except Exception as e:
+        print(f"❌ Erro ao executar COMPRA: {e}")
+
+
+def vender(qtd_btc):
+    """ Executa uma ordem de venda de BTC com a quantidade especificada. """
+    global ultima_ordem
+    try:
+        saldo_usdt, saldo_btc = verificar_saldo()
+
+        if saldo_btc < qtd_btc:
+            print("❌ Saldo insuficiente para venda!")
+            return
+
+        # Criar ordem de venda
+        ordem = client.order_market_sell(symbol=SYMBOL, quantity=qtd_btc)
+        ultima_ordem = "venda"
+
+        print(f"\n✅ Ordem de VENDA executada! Quantidade: {qtd_btc} BTC\n")
+        print(ordem)
+
+        # Exibir saldo atualizado
+        verificar_saldo()
+    except Exception as e:
+        print(f"❌ Erro ao executar VENDA: {e}")
+
+
+def executar_ordem(df):
+    """ Executa compra ou venda baseada nos sinais detectados. """
+    global ultima_ordem
+
+    # Últimos valores dos indicadores
+    cruzamento_compra = df["SMA9"].iloc[-1] > df["SMA21"].iloc[-1] and df["SMA9"].iloc[-2] <= df["SMA21"].iloc[-2]
+    cruzamento_venda = df["SMA9"].iloc[-1] < df["SMA21"].iloc[-1] and df["SMA9"].iloc[-2] >= df["SMA21"].iloc[-2]
+    rsi_compra = df["RSI"].iloc[-1] < 30
+    rsi_venda = df["RSI"].iloc[-1] > 70
+
+    # Definir a quantidade fixa de BTC para cada operação
+    quantidade_btc = 0.001  # Ajuste conforme necessário
+
+    # 📌 Critério de COMPRA (ambos precisam ser atingidos)
+    if cruzamento_compra and rsi_compra and ultima_ordem != "compra":
+        print("\n🚀 Executando COMPRA...")
+        comprar(quantidade_btc)
+
+    # 📌 Critério de VENDA (qualquer um dos critérios pode ativar a venda)
+    elif (cruzamento_venda or rsi_venda) and ultima_ordem != "venda":
+        print("\n⚡ Executando VENDA...")
+        vender(quantidade_btc)
+
+    else:
+        print("\n⏳ Nenhuma ação tomada. Aguardando nova oportunidade.\n")
+
+
 # EXECUÇÃO
+verificar_saldo()  # Mostra o saldo antes de qualquer ação
 df = obter_dados_historicos(SYMBOL, TIMEFRAME, CANDLE_LIMIT)
 df = calcular_indicadores(df)
 obter_preco_atual(SYMBOL)
 verificar_sinais(df)
-
-
+executar_ordem(df)
