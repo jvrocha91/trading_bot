@@ -209,6 +209,38 @@ def executar_ordem(df):
         print("\n⏳ Nenhuma ação tomada. Aguardando nova oportunidade.\n")
 
 
+def executar_bot():
+    """ Loop infinito que executa o bot a cada minuto """
+    while True:
+        try:
+            print("\n🔄 Executando novo ciclo de verificação...\n")
+            
+            # Verificar saldo antes de executar operações
+            verificar_saldo()
+
+            # Obter dados do mercado e calcular indicadores
+            df = obter_dados_historicos(SYMBOL, TIMEFRAME, CANDLE_LIMIT)
+            df = calcular_indicadores(df)
+
+            # Exibir preço atual
+            obter_preco_atual(SYMBOL)
+
+            # Verificar sinais de compra e venda
+            verificar_sinais(df)
+
+            # Executar ordens de compra e venda conforme os critérios
+            executar_ordem(df)
+
+        except Exception as e:
+            print(f"❌ Erro durante a execução do bot: {e}")
+
+        # Esperar 60 segundos antes do próximo ciclo
+        print("\n⏳ Aguardando 60 segundos para o próximo ciclo...\n")
+        time.sleep(60)
+
+# Iniciar o loop do bot
+executar_bot()
+
 # EXECUÇÃO
 verificar_saldo()  # Mostra o saldo antes de qualquer ação
 df = obter_dados_historicos(SYMBOL, TIMEFRAME, CANDLE_LIMIT)
@@ -216,3 +248,5 @@ df = calcular_indicadores(df)
 obter_preco_atual(SYMBOL)
 verificar_sinais(df)
 executar_ordem(df)
+
+
