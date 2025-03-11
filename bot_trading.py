@@ -2,6 +2,7 @@ import pandas as pd
 import ta
 from binance.client import Client
 import time
+import sys
 
 # Configurar API Key e Secret Key (substituir pelos seus dados)
 API_KEY = ""
@@ -67,8 +68,8 @@ def verificar_sinais(df):
     # 📌 Verificar os critérios separadamente
     cruzamento_compra = ultima_sma9 > ultima_sma21 and penultima_sma9 <= penultima_sma21
     cruzamento_venda = ultima_sma9 < ultima_sma21 and penultima_sma9 >= penultima_sma21
-    rsi_compra = ultimo_rsi < 30
-    rsi_venda = ultimo_rsi > 70
+    rsi_compra = ultimo_rsi < 35
+    rsi_venda = ultimo_rsi > 65
 
     # 📌 Relatório de verificação dos critérios
     print("🛠️ Verificação dos Critérios:\n")
@@ -210,11 +211,11 @@ def executar_ordem(df):
 
 
 def executar_bot():
-    """ Loop infinito que executa o bot a cada minuto """
+    """ Loop infinito que executa o bot a cada minuto, com timer regressivo """
     while True:
         try:
             print("\n🔄 Executando novo ciclo de verificação...\n")
-            
+
             # Verificar saldo antes de executar operações
             verificar_saldo()
 
@@ -234,9 +235,14 @@ def executar_bot():
         except Exception as e:
             print(f"❌ Erro durante a execução do bot: {e}")
 
-        # Esperar 60 segundos antes do próximo ciclo
-        print("\n⏳ Aguardando 60 segundos para o próximo ciclo...\n")
-        time.sleep(60)
+        # Timer regressivo de 60 segundos
+        print("\n⏳ Aguardando para o próximo ciclo...\n")
+        for i in range(60, 0, -1):
+            sys.stdout.write(f"\r⌛ Próxima verificação em {i} segundos... ")
+            sys.stdout.flush()
+            time.sleep(1)
+        
+        print("\n")  # Nova linha para separar os ciclos
 
 # Iniciar o loop do bot
 executar_bot()
