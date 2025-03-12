@@ -3,6 +3,21 @@ import ta
 from binance.client import Client
 import time
 import sys
+import logging
+
+# Configuração do sistema de logs
+logging.basicConfig(
+    filename="bot_trading.log",  # Nome do arquivo de log
+    level=logging.INFO,  # Nível de registro
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato da mensagem
+    datefmt="%Y-%m-%d %H:%M:%S",  # Formato da data
+)
+
+def registrar_log(mensagem):
+    """ Registra uma mensagem no arquivo de log e exibe no terminal """
+    logging.info(mensagem)  # Salva no arquivo de log
+    print(mensagem)  # Exibe no terminal
+
 
 # Configurar API Key e Secret Key (substituir pelos seus dados)
 API_KEY = ""
@@ -10,11 +25,18 @@ API_SECRET = ""
 
 # Criar cliente Binance
 client = Client(API_KEY, API_SECRET)
+#client = Client(API_KEY, API_SECRET, testnet=True)
+
 
 # Configurações globais
 SYMBOL = "BTCUSDT"  # Par de negociação
 TIMEFRAME = Client.KLINE_INTERVAL_5MINUTE  # Timeframe de 5 minutos
 CANDLE_LIMIT = 50  # Número de candles a buscar
+STOP_LOSS_PERCENT = 5  # Vender se cair 5% abaixo do preço de compra
+TAKE_PROFIT_PERCENT = 10  # Vender se subir 10% acima do preço de compra
+MAX_USDT_POR_ORDEM = 10  # Valor máximo de USDT a ser usado por ordem de compra
+
+
 
 def obter_dados_historicos(symbol, timeframe, limit):
     """ Obtém dados de mercado da Binance e retorna um DataFrame """
@@ -113,9 +135,8 @@ def obter_preco_atual(symbol):
     """ Obtém o preço atual do ativo """
     ticker = client.get_symbol_ticker(symbol=symbol)
     preco_atual = float(ticker["price"])
-    print(f"\n💰 Preço Atual do {symbol}: {preco_atual:.2f}\n")
+    registrar_log(f"💰 Preço Atual do {symbol}: {preco_atual:.2f} USDT")
     return preco_atual
-
 
 # Variável global para evitar ordens duplicadas
 ultima_ordem = None
@@ -126,88 +147,118 @@ def verificar_saldo():
         saldo_usdt = float(client.get_asset_balance(asset="USDT")["free"])
         saldo_btc = float(client.get_asset_balance(asset="BTC")["free"])
         
-        print(f"\n💰 Saldo Atual:")
-        print(f"  - USDT disponível: {saldo_usdt:.2f} USDT")
-        print(f"  - BTC disponível: {saldo_btc:.6f} BTC\n")
+        mensagem = f"\n💰 Saldo Atual:\n  - USDT disponível: {saldo_usdt:.2f} USDT\n  - BTC disponível: {saldo_btc:.6f} BTC\n"
+        registrar_log(mensagem)
         
         return saldo_usdt, saldo_btc
     except Exception as e:
-        print(f"❌ Erro ao obter saldo: {e}")
+        registrar_log(f"❌ Erro ao obter saldo: {e}")
         return 0, 0
 
 
-def comprar(qtd_btc):
-    """ Executa uma ordem de compra de BTC com a quantidade especificada. """
+def comprar():
+    """ Executa uma ordem de compra de BTC respeitando o valor máximo por operação. """
+    global ultima_ordem, preco_entrada
+    try:
+        saldo_usdt, saldo_btc = verificar_saldo()
+        preco_atual = obter_preco_atual(SYMBOL)
+
+        # Determinar a quantidade de BTC a comprar respeitando o limite de gasto
+        qtd_btc = MAX_USDT_POR_ORDEM / preco_atual  # Divide o valor máximo pelo preço atual do BTC
+
+        if saldo_usdt < MAX_USDT_POR_ORDEM:
+            registrar_log("❌ Saldo insuficiente para compra!")
+            return
+
+        # Criar ordem de compra
+        ordem = client.order_market_buy(symbol=SYMBOL, quantity=round(qtd_btc, 6))
+        ultima_ordem = "compra"
+        preco_entrada = preco_atual  # Salva o preço de entrada para monitoramento
+
+        registrar_log(f"\n✅ COMPRA Executada! Quantidade: {qtd_btc:.6f} BTC por {preco_atual:.2f} USDT")
+        registrar_log(f"💰 Valor gasto na compra: {MAX_USDT_POR_ORDEM:.2f} USDT\n")
+
+        # Exibir saldo atualizado
+        verificar_saldo()
+    except Exception as e:
+        registrar_log(f"❌ Erro ao executar COMPRA: {e}")
+
+
+
+def vender():
+    """ Executa uma ordem de venda de BTC com base no saldo disponível. """
     global ultima_ordem
     try:
         saldo_usdt, saldo_btc = verificar_saldo()
         preco_atual = obter_preco_atual(SYMBOL)
 
-        if saldo_usdt < preco_atual * qtd_btc:
-            print("❌ Saldo insuficiente para compra!")
+        if saldo_btc <= 0:
+            registrar_log("❌ Saldo insuficiente para venda!")
             return
 
-        # Criar ordem de compra
-        ordem = client.order_market_buy(symbol=SYMBOL, quantity=qtd_btc)
-        ultima_ordem = "compra"
-
-        print(f"\n✅ Ordem de COMPRA executada! Quantidade: {qtd_btc} BTC\n")
-        print(ordem)
-
-        # Exibir saldo atualizado
-        verificar_saldo()
-    except Exception as e:
-        print(f"❌ Erro ao executar COMPRA: {e}")
-
-
-def vender(qtd_btc):
-    """ Executa uma ordem de venda de BTC com a quantidade especificada. """
-    global ultima_ordem
-    try:
-        saldo_usdt, saldo_btc = verificar_saldo()
-
-        if saldo_btc < qtd_btc:
-            print("❌ Saldo insuficiente para venda!")
-            return
-
-        # Criar ordem de venda
-        ordem = client.order_market_sell(symbol=SYMBOL, quantity=qtd_btc)
+        # Criar ordem de venda com a quantidade total disponível
+        ordem = client.order_market_sell(symbol=SYMBOL, quantity=round(saldo_btc, 6))
         ultima_ordem = "venda"
 
-        print(f"\n✅ Ordem de VENDA executada! Quantidade: {qtd_btc} BTC\n")
-        print(ordem)
+        # Cálculo do lucro ou prejuízo da operação
+        lucro_prejuizo = (preco_atual - preco_entrada) * saldo_btc
+        status_lucro = "🔼 Lucro" if lucro_prejuizo > 0 else "🔻 Prejuízo"
+
+        registrar_log(f"\n✅ VENDA Executada! {saldo_btc:.6f} BTC vendidos a {preco_atual:.2f} USDT")
+        registrar_log(f"{status_lucro}: {lucro_prejuizo:.2f} USDT\n")
 
         # Exibir saldo atualizado
         verificar_saldo()
     except Exception as e:
-        print(f"❌ Erro ao executar VENDA: {e}")
+        registrar_log(f"❌ Erro ao executar VENDA: {e}")
+
 
 
 def executar_ordem(df):
-    """ Executa compra ou venda baseada nos sinais detectados. """
-    global ultima_ordem
+    """ Executa compra ou venda baseada nos sinais detectados e aplica Stop-Loss e Take-Profit """
+    global ultima_ordem, preco_entrada
 
     # Últimos valores dos indicadores
-    cruzamento_compra = df["SMA9"].iloc[-1] > df["SMA21"].iloc[-1] and df["SMA9"].iloc[-2] <= df["SMA21"].iloc[-2]
-    cruzamento_venda = df["SMA9"].iloc[-1] < df["SMA21"].iloc[-1] and df["SMA9"].iloc[-2] >= df["SMA21"].iloc[-2]
-    rsi_compra = df["RSI"].iloc[-1] < 30
-    rsi_venda = df["RSI"].iloc[-1] > 70
+    ultima_sma9 = df["SMA9"].iloc[-1]
+    ultima_sma21 = df["SMA21"].iloc[-1]
+    penultima_sma9 = df["SMA9"].iloc[-2]
+    penultima_sma21 = df["SMA21"].iloc[-2]
+    ultimo_rsi = df["RSI"].iloc[-1]
 
-    # Definir a quantidade fixa de BTC para cada operação
-    quantidade_btc = 0.001  # Ajuste conforme necessário
+    # 📌 Recalcular os critérios dentro da função
+    cruzamento_compra = ultima_sma9 > ultima_sma21 and penultima_sma9 <= penultima_sma21
+    cruzamento_venda = ultima_sma9 < ultima_sma21 and penultima_sma9 >= penultima_sma21
+    rsi_compra = ultimo_rsi < 35
+    rsi_venda = ultimo_rsi > 65
 
-    # 📌 Critério de COMPRA (ambos precisam ser atingidos)
+    # Obter preço atual do ativo
+    preco_atual = obter_preco_atual(SYMBOL)
+
+    # 📌 Critério de COMPRA
     if cruzamento_compra and rsi_compra and ultima_ordem != "compra":
-        print("\n🚀 Executando COMPRA...")
-        comprar(quantidade_btc)
+        registrar_log("\n🚀 Executando COMPRA...")
+        comprar()
 
-    # 📌 Critério de VENDA (qualquer um dos critérios pode ativar a venda)
+    # 📌 Critério de VENDA
     elif (cruzamento_venda or rsi_venda) and ultima_ordem != "venda":
-        print("\n⚡ Executando VENDA...")
-        vender(quantidade_btc)
+        registrar_log("\n⚡ Executando VENDA por critério técnico...")
+        vender()
+
+    # 📌 Aplicar Stop-Loss e Take-Profit
+    elif ultima_ordem == "compra":
+        perda_maxima = preco_entrada * (1 - STOP_LOSS_PERCENT / 100)
+        lucro_maximo = preco_entrada * (1 + TAKE_PROFIT_PERCENT / 100)
+
+        if preco_atual <= perda_maxima:
+            registrar_log(f"\n🚨 Stop-Loss atingido! Vendendo BTC a {preco_atual:.2f} USDT.")
+            vender()
+
+        elif preco_atual >= lucro_maximo:
+            registrar_log(f"\n🏆 Take-Profit atingido! Vendendo BTC a {preco_atual:.2f} USDT.")
+            vender()
 
     else:
-        print("\n⏳ Nenhuma ação tomada. Aguardando nova oportunidade.\n")
+        registrar_log("\n⏳ Nenhuma ação tomada. Aguardando nova oportunidade.\n")
 
 
 def executar_bot():
@@ -251,7 +302,6 @@ executar_bot()
 verificar_saldo()  # Mostra o saldo antes de qualquer ação
 df = obter_dados_historicos(SYMBOL, TIMEFRAME, CANDLE_LIMIT)
 df = calcular_indicadores(df)
-obter_preco_atual(SYMBOL)
 verificar_sinais(df)
 executar_ordem(df)
 
